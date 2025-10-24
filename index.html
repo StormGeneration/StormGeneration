@@ -139,24 +139,93 @@
       pointer-events: none;
     }
 
+    /* Popup overlay & modal */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      padding: 20px;
+    }
+    .overlay.show { display: flex; }
+
+    .modal {
+      width: 880px;
+      max-width: calc(100% - 40px);
+      max-height: calc(100% - 80px);
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .modal header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .modal h3 {
+      margin: 0;
+      font-size: 20px;
+      color: #e0f7fa;
+    }
+    .modal .close {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: #cfd8dc;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 6px;
+    }
+    .modal .close:hover { background: rgba(255,255,255,0.03); }
+
+    .modal .iframe-wrap {
+      flex: 1 1 auto;
+      overflow: auto;
+      border-radius: 8px;
+      background: transparent;
+      padding: 6px 0 0 0;
+    }
+
+    /* iframe responsive sizing to fit modal */
+    .modal iframe {
+      width: 100%;
+      height: 70vh;
+      max-height: calc(100% - 72px);
+      border: none;
+      border-radius: 8px;
+      display: block;
+    }
+
     @media (max-width: 960px) {
       .fullscreen { flex-direction: column; padding: 14px; gap: 18px; }
       .col { width: 100%; height: auto; max-height: none; padding: 20px; }
       header.topbar { left: 12px; right: 12px; top: 12px; }
       footer { left: 12px; right: 12px; bottom: 12px; }
+      .modal { width: 100%; padding: 12px; max-height: calc(100% - 40px); }
+      .modal iframe { height: 60vh; }
     }
   </style>
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar" id="mainContentWrapper">
     <div class="top-left">
-        <link rel="icon" href="favicon.ico" type="image/x-icon">
+      <link rel="icon" href="favicon.ico" type="image/x-icon">
       <h1 class="app-title">Storm Generation</h1>
     </div>
     <div class="creator">Created by Derrick Richard • 2025</div>
   </header>
 
-  <main class="fullscreen" role="main" aria-label="Storm Generation Links">
+  <main class="fullscreen" role="main" aria-label="Storm Generation Links" id="appMain">
     <section class="col" aria-labelledby="groupstorm-title">
       <div>
         <h2 id="groupstorm-title">GroupStorm</h2>
@@ -190,5 +259,188 @@ NameStorm lets you randomly select a student with the click of a button. NameSto
     </section>
   </main>
 
+  <!-- Popup overlay moved as a direct child of body for reliable overlaying -->
+  <div id="feedbackOverlay" class="overlay" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle" aria-hidden="true">
+    <div class="modal" role="document" aria-describedby="feedbackDesc">
+      <header>
+        <h3 id="feedbackTitle">Have a suggestion? Fill out this form.</h3>
+        <button class="close" aria-label="Close form popup" id="closePopup">&times;</button>
+      </header>
+
+      <div class="iframe-wrap" id="iframeWrap">
+        <iframe
+          src="https://docs.google.com/forms/d/e/1FAIpQLSdflhDwFL3OLQro1vchsRbYe71A9aSj7ZeVe9TKuFKgaUgnbA/viewform?embedded=true"
+          title="Suggestion Form"
+          loading="lazy"
+          referrerpolicy="no-referrer-when-downgrade"
+        >
+          Loading…
+        </iframe>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const overlay = document.getElementById('feedbackOverlay');
+      const closeBtn = document.getElementById('closePopup');
+      const appMain = document.getElementById('appMain'); // main UI to hide from AT when modal open
+      let nextTimeout = null;
+      let firstTimeout = null;
+      let previouslyFocused = null;
+
+      // Timing configuration
+      const firstDelay = 12000; // 12s initial delay
+      const minInterval = 90000; // 1.5 minutes
+      const maxInterval = 210000; // 3.5 minutes
+
+      // Utility: return focusable elements within an element
+      function getFocusableElements(container) {
+        if (!container) return [];
+        const sel = [
+          'a[href]:not([tabindex="-1"])',
+          'area[href]',
+          'input:not([disabled]):not([tabindex="-1"])',
+          'select:not([disabled]):not([tabindex="-1"])',
+          'textarea:not([disabled]):not([tabindex="-1"])',
+          'button:not([disabled]):not([tabindex="-1"])',
+          'iframe',
+          'object',
+          'embed',
+          '[contenteditable]:not([tabindex="-1"])',
+          '[tabindex]:not([tabindex="-1"])'
+        ].join(',');
+        return Array.from(container.querySelectorAll(sel)).filter(el => el.offsetWidth > 0 || el.offsetHeight > 0 || el === document.activeElement);
+      }
+
+      function showPopup() {
+        // Save previously focused element to restore later
+        previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+        // Make background inert for screen readers
+        if (appMain) appMain.setAttribute('aria-hidden', 'true');
+
+        overlay.classList.add('show');
+        overlay.setAttribute('aria-hidden', 'false');
+
+        // Prevent background scroll
+        document.documentElement.style.overflow = 'hidden';
+        document.body.style.overflow = 'hidden';
+
+        // Focus the first focusable element inside modal (close button)
+        const focusables = getFocusableElements(overlay);
+        if (focusables.length) {
+          focusables[0].focus();
+        } else {
+          closeBtn.focus();
+        }
+
+        // Install keydown listener for focus trapping
+        document.addEventListener('keydown', trapTabKey);
+      }
+
+      function hidePopup() {
+        overlay.classList.remove('show');
+        overlay.setAttribute('aria-hidden', 'true');
+
+        // Restore aria-hidden on main content
+        if (appMain) appMain.removeAttribute('aria-hidden');
+
+        // Restore scrolling
+        document.documentElement.style.overflow = '';
+        document.body.style.overflow = '';
+
+        // Remove focus trap listener
+        document.removeEventListener('keydown', trapTabKey);
+
+        // Restore previous focus if possible
+        if (previouslyFocused && previouslyFocused.focus) {
+          previouslyFocused.focus();
+        }
+
+        // Schedule next popup
+        scheduleNext();
+      }
+
+      function scheduleNext() {
+        if (nextTimeout) {
+          clearTimeout(nextTimeout);
+        }
+        // Random interval between min and max
+        const when = Math.floor(Math.random() * (maxInterval - minInterval + 1)) + minInterval;
+        nextTimeout = setTimeout(showPopup, when);
+      }
+
+      // Basic Tab-key focus trap: keep focus cycling inside overlay
+      function trapTabKey(e) {
+        if (!overlay.classList.contains('show')) return;
+        if (e.key !== 'Tab') return;
+
+        const focusables = getFocusableElements(overlay);
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+
+        if (e.shiftKey) {
+          // Shift+Tab
+          if (active === first || !overlay.contains(active)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          // Tab
+          if (active === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+
+      // Start first scheduled popup
+      firstTimeout = setTimeout(() => {
+        showPopup();
+        scheduleNext();
+      }, firstDelay);
+
+      // Close handlers
+      closeBtn.addEventListener('click', hidePopup);
+
+      // Clicking outside the modal closes it
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          hidePopup();
+        }
+      });
+
+      // Esc closes popup
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && overlay.classList.contains('show')) {
+          hidePopup();
+        }
+      });
+
+      // Clean up timers on unload so nothing leaks
+      window.addEventListener('beforeunload', () => {
+        if (firstTimeout) clearTimeout(firstTimeout);
+        if (nextTimeout) clearTimeout(nextTimeout);
+      });
+
+      // Ensure modal is accessible if focus attempts to escape (additional guard)
+      document.addEventListener('focus', function (evt) {
+        if (!overlay.classList.contains('show')) return;
+        if (!overlay.contains(evt.target)) {
+          evt.stopPropagation();
+          const focusables = getFocusableElements(overlay);
+          if (focusables.length) focusables[0].focus();
+          else closeBtn.focus();
+        }
+      }, true);
+    })();
+  </script>
 </body>
 </html>
